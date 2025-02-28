@@ -17,3 +17,4 @@
 /Users/lau/Downloads/Server_/bin/Debug/net9.0/MySqlConnector.dll
 /Users/lau/Downloads/Server_/obj/Debug/net9.0/Server_.csproj.AssemblyReference.cache
 /Users/lau/Downloads/Server_/obj/Debug/net9.0/Server_.csproj.Up2Date
+/Users/lau/Downloads/Server_/obj/Debug/net9.0/Server_.sourcelink.json

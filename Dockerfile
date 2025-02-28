@@ -1,5 +1,5 @@
 ﻿# Use the official .NET SDK image as the build image
-FROM mcr.microsoft.com/dotnet/sdk:7.0 AS build-env
+FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build-env
 WORKDIR /app
 
 # Copy csproj and restore dependencies
@@ -69,7 +69,7 @@ exec dotnet Server_.dll\n\
 && chmod +x /app/entrypoint.sh
 
 # Expose the port
-EXPOSE 12345
+EXPOSE 8443
 
 # Set the entrypoint
 ENTRYPOINT ["/app/entrypoint.sh"]
