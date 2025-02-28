@@ -23,7 +23,7 @@ RUN apt-get update \
        libc6 \
        libgcc1 \
        libgssapi-krb5-2 \
-       libssl1.1 \
+       libssl3 \
        libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
