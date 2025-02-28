@@ -750,7 +750,7 @@ class TCPServer
     // Create a new chat room
     static void CreateRoom(string roomName, ClientInfo clientInfo, NetworkStream stream)
     {
-        if (string.IsNullOrWhiteSpace(roomName) || roomName.contains(" "))
+        if (string.IsNullOrWhiteSpace(roomName) || roomName.Contains(" "))
         {
             SendResponse(stream, "Room name cannot be empty or contain spaces.");
             return;
