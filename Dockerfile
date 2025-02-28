@@ -13,7 +13,7 @@ COPY . ./
 RUN dotnet publish -c Release -o out
 
 # Build the runtime image
-FROM mcr.microsoft.com/dotnet/runtime:7.0
+FROM mcr.microsoft.com/dotnet/runtime:9.0
 WORKDIR /app
 COPY --from=build-env /app/out .
 
@@ -31,29 +31,21 @@ RUN apt-get update \
 RUN mkdir -p /app/logs \
     && chmod 777 /app/logs
 
-# Environment variables for database configuration
+# Define environment variables (without default values for sensitive data)
 ENV DB_SERVER=localhost \
     DB_PORT=3306 \
     DB_NAME=chatapp \
-    DB_USER=root \
-    DB_PASSWORD=password
-
-# Change server binding to accept connections from outside the container
-# In your code: TcpListener server = new TcpListener(IPAddress.Parse("127.0.0.1"), 12345);
-# Should be: TcpListener server = new TcpListener(IPAddress.Any, 12345);
-# You'll need to make this change in your Program.cs file
-
-# Create a db_config.json file using environment variables
-RUN echo '{\n\
-  "Server": "'$DB_SERVER'",\n\
-  "Port": '$DB_PORT',\n\
-  "Database": "'$DB_NAME'",\n\
-  "Username": "'$DB_USER'",\n\
-  "Password": "'$DB_PASSWORD'"\n\
-}' > /app/db_config.json
+    DB_USER=root
 
 # Create an entrypoint script to handle database configuration at runtime
 RUN echo '#!/bin/bash\n\
+\n\
+# Check if required environment variables are set\n\
+if [ -z "$DB_PASSWORD" ]; then\n\
+  echo "Error: DB_PASSWORD environment variable must be set"\n\
+  exit 1\n\
+fi\n\
+\n\
 # Generate db_config.json from environment variables\n\
 echo "{\n\
   \"Server\": \"$DB_SERVER\",\n\
@@ -63,13 +55,15 @@ echo "{\n\
   \"Password\": \"$DB_PASSWORD\"\n\
 }" > /app/db_config.json\n\
 \n\
+echo "Database configuration created successfully"\n\
+\n\
 # Start the application\n\
 exec dotnet Server_.dll\n\
 ' > /app/entrypoint.sh \
 && chmod +x /app/entrypoint.sh
 
 # Expose the port
-EXPOSE 8443
+EXPOSE 8443 
 
 # Set the entrypoint
 ENTRYPOINT ["/app/entrypoint.sh"]
