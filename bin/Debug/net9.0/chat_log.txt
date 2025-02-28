@@ -1,0 +1,3 @@
+2025-02-27 23:22:22 | admin | general | /help
+2025-02-27 23:22:26 | admin | general | /users
+2025-02-27 23:22:31 | admin | general | /quit

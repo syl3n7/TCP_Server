@@ -1,0 +1,7 @@
+{
+  "Server": "192.168.3.15",
+  "Port": 3306,
+  "Database": "tcpserver",
+  "Username": "admin",
+  "Password": "password"
+}
