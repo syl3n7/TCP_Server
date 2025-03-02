@@ -1,0 +1,8 @@
+/Users/lau/Downloads/Server_/bin/Release/net9.0/publish/Server_
+/Users/lau/Downloads/Server_/bin/Release/net9.0/publish/Server_.dll
+/Users/lau/Downloads/Server_/bin/Release/net9.0/publish/Server_.deps.json
+/Users/lau/Downloads/Server_/bin/Release/net9.0/publish/Server_.runtimeconfig.json
+/Users/lau/Downloads/Server_/bin/Release/net9.0/publish/Server_.pdb
+/Users/lau/Downloads/Server_/bin/Release/net9.0/publish/Microsoft.Extensions.DependencyInjection.Abstractions.dll
+/Users/lau/Downloads/Server_/bin/Release/net9.0/publish/Microsoft.Extensions.Logging.Abstractions.dll
+/Users/lau/Downloads/Server_/bin/Release/net9.0/publish/MySqlConnector.dll
