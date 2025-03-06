@@ -12,7 +12,6 @@
 /Users/lau/Downloads/Server_/obj/Debug/net9.0/Server_.pdb
 /Users/lau/Downloads/Server_/obj/Debug/net9.0/Server_.genruntimeconfig.cache
 /Users/lau/Downloads/Server_/obj/Debug/net9.0/ref/Server_.dll
-/Users/lau/Downloads/Server_/bin/Debug/net9.0/Microsoft.Extensions.DependencyInjection.Abstractions.dll
 /Users/lau/Downloads/Server_/bin/Debug/net9.0/Microsoft.Extensions.Logging.Abstractions.dll
 /Users/lau/Downloads/Server_/bin/Debug/net9.0/MySqlConnector.dll
 /Users/lau/Downloads/Server_/obj/Debug/net9.0/Server_.csproj.AssemblyReference.cache

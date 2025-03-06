@@ -91,9 +91,26 @@ class TCPServer
         else
         {
             Console.WriteLine("Failed to connect to the database. Please check your configuration.");
-            // Optionally: Prompt user to reconfigure or exit
-            File.Delete(configPath);
-            SetupDatabaseConfiguration();
+            Console.WriteLine("Would you like to reconfigure? (y/n)");
+            string response = Console.ReadLine()?.ToLower();
+            if (response == "y")
+            {
+                // Let user reconfigure without deleting file first
+                config = GetConfigFromUser();
+                SaveConfigToFile(config);
+                // Test the new configuration
+                connectionString = $"Server={config.Server};Port={config.Port};Database={config.Database};User ID={config.Username};Password={config.Password};";
+                if (!TestDatabaseConnection())
+                {
+                    Console.WriteLine("Still unable to connect. Please check your MariaDB server.");
+                    Environment.Exit(1); // Exit application
+                }
+            }
+            else
+            {
+                Console.WriteLine("Cannot continue without database connection. Exiting.");
+                Environment.Exit(1);
+            }
         }
     }
     
@@ -750,7 +767,7 @@ class TCPServer
     // Create a new chat room
     static void CreateRoom(string roomName, ClientInfo clientInfo, NetworkStream stream)
     {
-        if (string.IsNullOrWhiteSpace(roomName) || roomName.Contains(" "))
+        if (string.IsNullOrWhiteSpace(roomName) || roomName.contains(" "))
         {
             SendResponse(stream, "Room name cannot be empty or contain spaces.");
             return;
