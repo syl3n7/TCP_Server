@@ -10,6 +10,8 @@ using System.IO;
 using System.Text.Json;
 using System.Diagnostics;
 using System.Linq;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
 
 class TCPServer
 {
@@ -36,17 +38,20 @@ class TCPServer
             Console.WriteLine("Default 'general' room created");
         }
         
+        // Load or create certificate
+        X509Certificate2 serverCertificate = GetServerCertificate();
+        
         TcpListener server = new TcpListener(IPAddress.Any, 8443);
         server.Start();
-        Console.WriteLine("Server started\nWaiting for connections...");
+        Console.WriteLine("Secure server started on port 8443\nWaiting for connections...");
 
         while (true)
         {
             TcpClient client = server.AcceptTcpClient();
             Console.WriteLine($"New connection from {((IPEndPoint)client.Client.RemoteEndPoint).ToString()}");
             
-            Thread clientThread = new Thread(new ParameterizedThreadStart(HandleClient));
-            clientThread.Start(client);
+            Thread clientThread = new Thread(new ParameterizedThreadStart(HandleSecureClient));
+            clientThread.Start(new SecureClientState { Client = client, Certificate = serverCertificate });
         }
     }
     
@@ -278,7 +283,7 @@ class TCPServer
     static void HandleClient(object clientObj)
     {
         TcpClient tcpClient = (TcpClient)clientObj;
-        NetworkStream stream = tcpClient.GetStream();
+        SslStream stream = tcpClient.GetStream();
         string username = null;
         bool isAuthenticated = false;
         ClientInfo clientInfo = null;
@@ -731,15 +736,8 @@ class TCPServer
         }
     }
 
-    // Helper method to send response to client
-    static void SendResponse(NetworkStream stream, string message)
-    {
-        byte[] responseBytes = Encoding.ASCII.GetBytes(message);
-        stream.Write(responseBytes, 0, responseBytes.Length);
-    }
-
     // Send help message based on user role
-    static void SendHelpMessage(NetworkStream stream, bool isAdmin)
+    static void SendHelpMessage(SslStream stream, bool isAdmin)
     {
         StringBuilder help = new StringBuilder();
         help.AppendLine("Available commands:");
@@ -765,18 +763,9 @@ class TCPServer
     }
 
     // Create a new chat room
-    static void CreateRoom(string roomName, ClientInfo clientInfo, NetworkStream stream)
+    static void CreateRoom(string roomName, ClientInfo clientInfo, SslStream stream)
     {
-        static void CreateRoom(string roomName, ClientInfo clientInfo, NetworkStream stream)
-        {
-            if (string.IsNullOrWhiteSpace(roomName) || roomName.Contains(" "))
-            {
-                SendResponse(stream, "Room name cannot be empty or contain spaces.");
-                return;
-            }
-            
-            // ...rest of the method...
-        }        if (string.IsNullOrWhiteSpace(roomName) || roomName.Contains(" "))
+        if (string.IsNullOrWhiteSpace(roomName) || roomName.Contains(" "))
         {
             SendResponse(stream, "Room name cannot be empty or contain spaces.");
             return;
@@ -797,7 +786,7 @@ class TCPServer
     }
 
     // Join an existing chat room
-    static void JoinRoom(string roomName, ClientInfo clientInfo, NetworkStream stream)
+    static void JoinRoom(string roomName, ClientInfo clientInfo, SslStream stream)
     {
         lock (roomsLock)
         {
@@ -824,7 +813,7 @@ class TCPServer
     }
 
     // List all available chat rooms
-    static void ListRooms(NetworkStream stream)
+    static void ListRooms(SslStream stream)
     {
         StringBuilder roomList = new StringBuilder();
         roomList.AppendLine("Available rooms:");
@@ -841,7 +830,7 @@ class TCPServer
     }
 
     // Send a direct message to another user
-    static void SendDirectMessage(string targetUsername, string message, ClientInfo sender, NetworkStream stream)
+    static void SendDirectMessage(string targetUsername, string message, ClientInfo sender, SslStream stream)
     {
         ClientInfo recipient = null;
         
@@ -878,7 +867,7 @@ class TCPServer
     }
 
     // List users in the current room or all users if admin
-    static void ListUsers(NetworkStream stream, bool isAdmin)
+    static void ListUsers(SslStream stream, bool isAdmin)
     {
         StringBuilder userList = new StringBuilder();
 
@@ -930,7 +919,7 @@ class TCPServer
     }
 
     // Admin command to kick a user
-    static void KickUser(string username, NetworkStream stream)
+    static void KickUser(string username, SslStream stream)
     {
         ClientInfo targetClient = null;
         
@@ -975,7 +964,7 @@ class TCPServer
     }
 
     // Admin command to delete a room
-    static void DeleteRoom(string roomName, NetworkStream stream)
+    static void DeleteRoom(string roomName, SslStream stream)
     {
         if (roomName.Equals("general", StringComparison.OrdinalIgnoreCase))
         {
@@ -1012,7 +1001,7 @@ class TCPServer
     }
 
     // Admin command to broadcast to all users
-    static void BroadcastGlobal(string message, NetworkStream stream)
+    static void BroadcastGlobal(string message, SslStream stream)
     {
         lock (roomsLock)
         {
@@ -1038,7 +1027,7 @@ class TCPServer
     }
 
     // Admin command to get server status
-    static void SendServerStatus(NetworkStream stream)
+    static void SendServerStatus(SslStream stream)
     {
         int totalUsers = 0;
         StringBuilder status = new StringBuilder();
@@ -1083,7 +1072,7 @@ class TCPServer
     }
 
     // Implement the BanUser method
-    static void BanUser(string username, int minutes, NetworkStream stream)
+    static void BanUser(string username, int minutes, SslStream stream)
     {
         if (username.Equals("admin", StringComparison.OrdinalIgnoreCase))
         {
@@ -1102,6 +1091,723 @@ class TCPServer
         
         SendResponse(stream, $"User '{username}' has been banned for {minutes} minutes.");
         Console.WriteLine($"User '{username}' has been banned for {minutes} minutes by admin.");
+    }
+
+    // Method to get or create a server certificate
+    static X509Certificate2 GetServerCertificate()
+    {
+        const string certificatePath = "server_certificate.pfx";
+        const string certificatePassword = "securepassword";
+        
+        if (File.Exists(certificatePath))
+        {
+            try
+            {
+                return new X509Certificate2(certificatePath, certificatePassword);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error loading existing certificate: {ex.Message}");
+                // Fall through to create a new one
+            }
+        }
+        
+        Console.WriteLine("Creating new self-signed certificate...");
+        
+        using (var rsa = RSA.Create(2048))
+        {
+            var request = new CertificateRequest(
+                "CN=ChatServer", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+
+            var certificate = request.CreateSelfSigned(
+                DateTimeOffset.Now, 
+                DateTimeOffset.Now.AddYears(1));
+                
+            File.WriteAllBytes(certificatePath, 
+                certificate.Export(X509ContentType.Pfx, certificatePassword));
+                
+            Console.WriteLine($"New self-signed certificate created at {certificatePath}");
+            return certificate;
+        }
+    }
+
+    static void HandleSecureClient(object state)
+    {
+        var clientState = (SecureClientState)state;
+        TcpClient tcpClient = clientState.Client;
+        SslStream sslStream = null;
+        string username = null;
+        bool isAuthenticated = false;
+        ClientInfo clientInfo = null;
+
+        try
+        {
+            // Create the SSL stream
+            sslStream = new SslStream(tcpClient.GetStream(), false);
+            
+            // Authenticate as server
+            sslStream.AuthenticateAsServer(
+                clientState.Certificate,
+                clientCertificateRequired: false,
+                checkCertificateRevocation: true);
+                
+            Console.WriteLine($"Secure connection established with {((IPEndPoint)tcpClient.Client.RemoteEndPoint).ToString()}");
+
+            // Send welcome message with authentication instructions
+            string welcomeMsg = "Welcome to Secure TCP server!\r\nPlease authenticate using:\r\n/login username:password\r\n/register username:password";
+            byte[] welcomeBytes = Encoding.UTF8.GetBytes(welcomeMsg);
+            sslStream.Write(welcomeBytes, 0, welcomeBytes.Length);
+
+            // Buffer for reading data
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+
+            // Authentication loop
+            while (!isAuthenticated)
+            {
+                bytesRead = sslStream.Read(buffer, 0, buffer.Length);
+                if (bytesRead == 0) return; // Client disconnected
+
+                string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                // Rest of authentication code remains the same but using sslStream instead of stream
+                if (message.StartsWith("/login "))
+                {
+                    string[] parts = message.Substring(7).Trim().Split(':');
+                    if (parts.Length == 2)
+                    {
+                        string user = parts[0];
+                        string password = parts[1];
+
+                        // Add this check in authentication
+                        lock (bannedUsers)
+                        {
+                            if (bannedUsers.TryGetValue(user.ToLower(), out DateTime banExpiry))
+                            {
+                                if (DateTime.Now < banExpiry)
+                                {
+                                    TimeSpan remaining = banExpiry - DateTime.Now;
+                                    string response = $"Your account is banned. Ban expires in {(int)remaining.TotalMinutes} minutes.";
+                                    byte[] responseBytes = Encoding.UTF8.GetBytes(response);
+                                    sslStream.Write(responseBytes, 0, responseBytes.Length);
+                                    return;
+                                }
+                                else
+                                {
+                                    // Ban expired, remove from list
+                                    bannedUsers.Remove(user.ToLower());
+                                }
+                            }
+                        }
+                        
+                        if (ValidateUserFromDatabase(user, password))
+                        {
+                            isAuthenticated = true;
+                            username = user;
+                            
+                            // Add to general room
+                            lock (roomsLock)
+                            {
+                                ChatRoom generalRoom = chatRooms["general"];
+                                clientInfo = new ClientInfo(tcpClient, sslStream, username, generalRoom);
+                                generalRoom.AddClient(clientInfo);
+                            }
+                            
+                            string response = "Login successful! You have joined the 'general' room. You can now chat.";
+                            byte[] responseBytes = Encoding.UTF8.GetBytes(response);
+                            sslStream.Write(responseBytes, 0, responseBytes.Length);
+                        }
+                        else
+                        {
+                            string response = "Authentication failed. Try again.";
+                            byte[] responseBytes = Encoding.UTF8.GetBytes(response);
+                            sslStream.Write(responseBytes, 0, responseBytes.Length);
+                        }
+                    }
+                }
+                else if (message.StartsWith("/register "))
+                {
+                    string[] parts = message.Substring(10).Trim().Split(':');
+                    if (parts.Length == 2)
+                    {
+                        string user = parts[0];
+                        string password = parts[1];
+                        
+                        if (RegisterUserToDatabase(user, password))
+                        {
+                            isAuthenticated = true;
+                            username = user;
+                            
+                            // Add to general room
+                            lock (roomsLock)
+                            {
+                                ChatRoom generalRoom = chatRooms["general"];
+                                clientInfo = new ClientInfo(tcpClient, sslStream, username, generalRoom);
+                                generalRoom.AddClient(clientInfo);
+                            }
+                            
+                            string response = "Registration successful! You have joined the 'general' room. You can now chat.";
+                            byte[] responseBytes = Encoding.UTF8.GetBytes(response);
+                            sslStream.Write(responseBytes, 0, responseBytes.Length);
+                        }
+                        else
+                        {
+                            string response = "Registration failed. Username may already exist.";
+                            byte[] responseBytes = Encoding.UTF8.GetBytes(response);
+                            sslStream.Write(responseBytes, 0, responseBytes.Length);
+                        }
+                    }
+                }
+                else
+                {
+                    string response = "Invalid command. Use '/login username:password' or '/register username:password'";
+                    byte[] responseBytes = Encoding.UTF8.GetBytes(response);
+                    sslStream.Write(responseBytes, 0, responseBytes.Length);
+                }
+            }
+
+            // Add to client list only after authentication
+            lock (clientLock)
+            {
+                clients.Add(tcpClient);
+            }
+            Console.WriteLine($"Client {username} authenticated and joined general room. Total clients: {clients.Count}");
+            
+            // Announce new user to the room
+            clientInfo.CurrentRoom.BroadcastMessage("Server", $"{username} has joined the room.");
+
+            // Regular communication after authentication
+            while (true)
+            {
+                bytesRead = sslStream.Read(buffer, 0, buffer.Length);
+                if (bytesRead == 0) break; // Client disconnected
+
+                string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                Console.WriteLine($"Received from {username} in room '{clientInfo.CurrentRoom.Name}': {message}");
+
+                // Add this check before processing messages
+                const int MAX_MESSAGES_PER_MINUTE = 30;
+                const int RATE_LIMIT_RESET_SECONDS = 60;
+
+                if ((DateTime.Now - clientInfo.LastMessageTime).TotalSeconds > RATE_LIMIT_RESET_SECONDS)
+                {
+                    clientInfo.MessageCount = 0;
+                    clientInfo.LastMessageTime = DateTime.Now;
+                }
+                else
+                {
+                    clientInfo.MessageCount++;
+                    if (clientInfo.MessageCount > MAX_MESSAGES_PER_MINUTE)
+                    {
+                        SendResponse(sslStream, "Rate limit exceeded. Please slow down.");
+                        continue; // Skip processing this message
+                    }
+                }
+
+                // Log the message
+                LogMessage(clientInfo.Username, clientInfo.CurrentRoom.Name, message);
+
+                // Check if message is a command
+                if (message.StartsWith("/"))
+                {
+                    string[] commandParts = message.Trim().Split(' ', 2);
+                    string command = commandParts[0].ToLower();
+                    string parameter = commandParts.Length > 1 ? commandParts[1] : string.Empty;
+
+                    switch (command)
+                    {
+                        case "/help":
+                            SendHelpMessage(sslStream, username == "admin");
+                            break;
+                            
+                        case "/quit":
+                        case "/logout":
+                            string logoutResponse = "Logging out. Goodbye!";
+                            byte[] logoutBytes = Encoding.UTF8.GetBytes(logoutResponse);
+                            sslStream.Write(logoutBytes, 0, logoutBytes.Length);
+                            return; // This will exit the method and trigger the finally block
+                            
+                        case "/create-room":
+                            if (!string.IsNullOrWhiteSpace(parameter))
+                                CreateRoom(parameter, clientInfo, sslStream);
+                            else
+                                SendResponse(sslStream, "Usage: /create-room roomName");
+                            break;
+                            
+                        case "/join-room":
+                            if (!string.IsNullOrWhiteSpace(parameter))
+                                JoinRoom(parameter, clientInfo, sslStream);
+                            else
+                                SendResponse(sslStream, "Usage: /join-room roomName");
+                            break;
+                            
+                        case "/list-rooms":
+                            ListRooms(sslStream);
+                            break;
+                            
+                        case "/dm":
+                            if (string.IsNullOrWhiteSpace(parameter))
+                            {
+                                SendResponse(sslStream, "Usage: /dm username message");
+                                break;
+                            }
+                            
+                            string[] dmParts = parameter.Split(' ', 2);
+                            if (dmParts.Length < 2 || string.IsNullOrWhiteSpace(dmParts[0]) || string.IsNullOrWhiteSpace(dmParts[1]))
+                            {
+                                SendResponse(sslStream, "Usage: /dm username message");
+                                break;
+                            }
+                            
+                            SendDirectMessage(dmParts[0], dmParts[1], clientInfo, sslStream);
+                            break;
+
+                        case "/users":
+                            ListUsers(sslStream, username == "admin");
+                            break;
+                            
+                        // Admin-only commands
+                        case "/kick":
+                            if (username != "admin")
+                            {
+                                SendResponse(sslStream, "Permission denied: Admin access required");
+                                break;
+                            }
+                            
+                            if (string.IsNullOrWhiteSpace(parameter))
+                            {
+                                SendResponse(sslStream, "Usage: /kick username");
+                                break;
+                            }
+                            
+                            KickUser(parameter, sslStream);
+                            break;
+                            
+                        case "/delete-room":
+                            if (username != "admin")
+                            {
+                                SendResponse(sslStream, "Permission denied: Admin access required");
+                                break;
+                            }
+                            
+                            if (string.IsNullOrWhiteSpace(parameter))
+                            {
+                                SendResponse(sslStream, "Usage: /delete-room roomName");
+                                break;
+                            }
+                            
+                            DeleteRoom(parameter, sslStream);
+                            break;
+
+                        case "/broadcast":
+                            if (username != "admin")
+                            {
+                                SendResponse(sslStream, "Permission denied: Admin access required");
+                                break;
+                            }
+                            
+                            if (string.IsNullOrWhiteSpace(parameter))
+                            {
+                                SendResponse(sslStream, "Usage: /broadcast message");
+                                break;
+                            }
+                            
+                            BroadcastGlobal(parameter, sslStream);
+                            break;
+
+                        case "/server-status":
+                            if (username != "admin")
+                            {
+                                SendResponse(sslStream, "Permission denied: Admin access required");
+                                break;
+                            }
+                            
+                            SendServerStatus(sslStream);
+                            break;
+
+                        case "/ban":
+                            if (username != "admin")
+                            {
+                                SendResponse(sslStream, "Permission denied: Admin access required");
+                                break;
+                            }
+                            
+                            string[] banParams = parameter.Split(' ', 2);
+                            if (banParams.Length < 2)
+                            {
+                                SendResponse(sslStream, "Usage: /ban username minutes");
+                                break;
+                            }
+                            
+                            string banUser = banParams[0];
+                            if (!int.TryParse(banParams[1], out int minutes) || minutes <= 0)
+                            {
+                                SendResponse(sslStream, "Ban duration must be a positive number of minutes");
+                                break;
+                            }
+                            
+                            BanUser(banUser, minutes, sslStream);
+                            break;
+
+                        default:
+                            SendResponse(sslStream, "Unknown command. Type /help for available commands.");
+                            break;
+                    }
+                }
+                else
+                {
+                    // Broadcast the message to everyone in the room
+                    clientInfo.CurrentRoom.BroadcastMessage(username, message);
+                    
+                    // Echo back to sender with room prefix
+                    string echoResponse = $"[{clientInfo.CurrentRoom.Name}] You: {message}";
+                    byte[] echoBytes = Encoding.UTF8.GetBytes(echoResponse);
+                    sslStream.Write(echoBytes, 0, echoBytes.Length);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in secure connection: {ex.Message}");
+        }
+        finally
+        {
+            // Remove from room
+            if (clientInfo != null)
+            {
+                lock (roomsLock)
+                {
+                    if (clientInfo.CurrentRoom != null)
+                    {
+                        clientInfo.CurrentRoom.RemoveClient(clientInfo);
+                        clientInfo.CurrentRoom.BroadcastMessage("Server", $"{username} has left the room.");
+                    }
+                }
+            }
+            
+            // Remove from client list
+            lock (clientLock)
+            {
+                clients.Remove(tcpClient);
+            }
+            Console.WriteLine($"Client {username ?? "unknown"} disconnected. Total clients: {clients.Count}");
+            sslStream?.Dispose();
+            tcpClient.Close();
+        }
+    }
+
+    static void JoinRoom(string roomName, ClientInfo clientInfo, SslStream stream)
+    {
+        lock (roomsLock)
+        {
+            if (!chatRooms.TryGetValue(roomName.ToLower(), out ChatRoom targetRoom))
+            {
+                SendResponse(stream, $"Room '{roomName}' does not exist.");
+                return;
+            }
+
+            if (clientInfo.CurrentRoom != null)
+            {
+                // Announce departure from current room
+                clientInfo.CurrentRoom.BroadcastMessage("Server", $"{clientInfo.Username} has left the room.");
+                clientInfo.CurrentRoom.RemoveClient(clientInfo);
+            }
+
+            // Add to new room
+            targetRoom.AddClient(clientInfo);
+            clientInfo.CurrentRoom = targetRoom;
+
+            SendResponse(stream, $"You have joined the room '{roomName}'.");
+            targetRoom.BroadcastMessage("Server", $"{clientInfo.Username} has joined the room.");
+        }
+    }
+
+    static void ListRooms(SslStream stream)
+    {
+        StringBuilder roomList = new StringBuilder();
+        roomList.AppendLine("Available rooms:");
+
+        lock (roomsLock)
+        {
+            foreach (var room in chatRooms.Values)
+            {
+                roomList.AppendLine($"- {room.Name} ({room.Clients.Count} users)");
+            }
+        }
+
+        SendResponse(stream, roomList.ToString());
+    }
+
+    static void SendDirectMessage(string targetUsername, string message, ClientInfo sender, SslStream stream)
+    {
+        ClientInfo recipient = null;
+        
+        // Find the recipient across all rooms
+        lock (roomsLock)
+        {
+            foreach (var room in chatRooms.Values)
+            {
+                recipient = room.Clients.FirstOrDefault(c => c.Username.Equals(targetUsername, StringComparison.OrdinalIgnoreCase));
+                if (recipient != null) break;
+            }
+        }
+
+        if (recipient == null)
+        {
+            SendResponse(stream, $"User '{targetUsername}' not found or not connected.");
+            return;
+        }
+
+        // Send message to recipient
+        try
+        {
+            byte[] dmBytes = Encoding.ASCII.GetBytes($"[DM from {sender.Username}]: {message}");
+            recipient.Stream.Write(dmBytes, 0, dmBytes.Length);
+            
+            // Confirmation to sender
+            SendResponse(stream, $"[DM to {targetUsername}]: {message}");
+            Console.WriteLine($"DM from {sender.Username} to {targetUsername}");
+        }
+        catch (Exception ex)
+        {
+            SendResponse(stream, $"Failed to send message to {targetUsername}: {ex.Message}");
+        }
+    }
+
+    static void ListUsers(SslStream stream, bool isAdmin)
+    {
+        StringBuilder userList = new StringBuilder();
+
+        if (isAdmin)
+        {
+            userList.AppendLine("All connected users (admin view):");
+            
+            lock (roomsLock)
+            {
+                foreach (var room in chatRooms.Values)
+                {
+                    userList.AppendLine($"\nRoom: {room.Name}");
+                    foreach (var client in room.Clients)
+                    {
+                        userList.AppendLine($"- {client.Username} ({((IPEndPoint)client.Client.Client.RemoteEndPoint).ToString()})");
+                    }
+                }
+            }
+        }
+        else
+        {
+            // For regular users, just show users in their current room
+            ClientInfo clientInfo = null;
+            
+            lock (clientLock)
+            {
+                foreach (var room in chatRooms.Values)
+                {
+                    clientInfo = room.Clients.FirstOrDefault(c => c.Stream == stream);
+                    if (clientInfo != null) break;
+                }
+            }
+            
+            if (clientInfo != null && clientInfo.CurrentRoom != null)
+            {
+                userList.AppendLine($"Users in room '{clientInfo.CurrentRoom.Name}':");
+                foreach (var client in clientInfo.CurrentRoom.Clients)
+                {
+                    userList.AppendLine($"- {client.Username}");
+                }
+            }
+            else
+            {
+                userList.AppendLine("Error: Could not determine your current room.");
+            }
+        }
+        
+        SendResponse(stream, userList.ToString());
+    }
+
+    static void KickUser(string username, SslStream stream)
+    {
+        ClientInfo targetClient = null;
+        
+        // Find the user across all rooms
+        lock (roomsLock)
+        {
+            foreach (var room in chatRooms.Values)
+            {
+                targetClient = room.Clients.FirstOrDefault(c => 
+                    c.Username.Equals(username, StringComparison.OrdinalIgnoreCase));
+                if (targetClient != null) break;
+            }
+        }
+
+        if (targetClient == null)
+        {
+            SendResponse(stream, $"User '{username}' not found.");
+            return;
+        }
+
+        if (username.Equals("admin", StringComparison.OrdinalIgnoreCase))
+        {
+            SendResponse(stream, "Cannot kick the admin user.");
+            return;
+        }
+
+        try
+        {
+            // Notify the user they are being kicked
+            SendResponse(targetClient.Stream, "You have been kicked from the server by an administrator.");
+            
+            // Force disconnect by closing the client
+            targetClient.Client.Close();
+            
+            SendResponse(stream, $"User '{username}' has been kicked.");
+            Console.WriteLine($"User '{username}' has been kicked by admin.");
+        }
+        catch (Exception ex)
+        {
+            SendResponse(stream, $"Error kicking user: {ex.Message}");
+        }
+    }
+
+    static void DeleteRoom(string roomName, SslStream stream)
+    {
+        if (roomName.Equals("general", StringComparison.OrdinalIgnoreCase))
+        {
+            SendResponse(stream, "Cannot delete the 'general' room.");
+            return;
+        }
+
+        lock (roomsLock)
+        {
+            if (!chatRooms.TryGetValue(roomName.ToLower(), out ChatRoom room))
+            {
+                SendResponse(stream, $"Room '{roomName}' does not exist.");
+                return;
+            }
+
+            // Move all users to general room
+            ChatRoom generalRoom = chatRooms["general"];
+            foreach (var client in room.Clients.ToList())
+            {
+                // Notify user
+                SendResponse(client.Stream, $"Room '{roomName}' has been deleted by an administrator. You've been moved to 'general'.");
+                
+                // Move client
+                room.RemoveClient(client);
+                generalRoom.AddClient(client);
+                client.CurrentRoom = generalRoom;
+            }
+
+            // Remove room
+            chatRooms.Remove(roomName.ToLower());
+            SendResponse(stream, $"Room '{roomName}' deleted successfully and all users moved to 'general'.");
+            Console.WriteLine($"Room '{roomName}' deleted by admin");
+        }
+    }
+
+    static void BroadcastGlobal(string message, SslStream stream)
+    {
+        lock (roomsLock)
+        {
+            foreach (var room in chatRooms.Values)
+            {
+                foreach (var client in room.Clients.ToList())
+                {
+                    try
+                    {
+                        byte[] broadcastBytes = Encoding.ASCII.GetBytes($"[ADMIN BROADCAST]: {message}");
+                        client.Stream.Write(broadcastBytes, 0, broadcastBytes.Length);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error broadcasting to {client.Username}: {ex.Message}");
+                    }
+                }
+            }
+        }
+
+        SendResponse(stream, $"Broadcast sent: {message}");
+        Console.WriteLine($"Admin broadcast: {message}");
+    }
+
+    static void SendServerStatus(SslStream stream)
+    {
+        int totalUsers = 0;
+        StringBuilder status = new StringBuilder();
+        status.AppendLine("==== SERVER STATUS ====");
+        
+        lock (roomsLock)
+        {
+            status.AppendLine($"Total rooms: {chatRooms.Count}");
+            
+            foreach (var room in chatRooms)
+            {
+                totalUsers += room.Value.Clients.Count;
+            }
+            
+            status.AppendLine($"Total connected users: {totalUsers}");
+            status.AppendLine("\nRoom details:");
+            
+            foreach (var room in chatRooms)
+            {
+                status.AppendLine($"- {room.Key}: {room.Value.Clients.Count} users");
+            }
+        }
+        
+        status.AppendLine("\nServer uptime: " + (DateTime.Now - Process.GetCurrentProcess().StartTime).ToString(@"dd\.hh\:mm\:ss"));
+        status.AppendLine("Memory usage: " + (Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024)) + " MB");
+        
+        SendResponse(stream, status.ToString());
+    }
+
+    static void BanUser(string username, int minutes, SslStream stream)
+    {
+        if (username.Equals("admin", StringComparison.OrdinalIgnoreCase))
+        {
+            SendResponse(stream, "Cannot ban the admin user.");
+            return;
+        }
+
+        // Add to banned users list
+        lock (bannedUsers)
+        {
+            bannedUsers[username.ToLower()] = DateTime.Now.AddMinutes(minutes);
+        }
+        
+        // Kick the user if they're online
+        KickUser(username, stream);
+        
+        SendResponse(stream, $"User '{username}' has been banned for {minutes} minutes.");
+        Console.WriteLine($"User '{username}' has been banned for {minutes} minutes by admin.");
+    }
+
+    // Create a new chat room
+    static void CreateRoom(string roomName, ClientInfo clientInfo, SslStream stream)
+    {
+        if (string.IsNullOrWhiteSpace(roomName) || roomName.Contains(" "))
+        {
+            SendResponse(stream, "Room name cannot be empty or contain spaces.");
+            return;
+        }
+
+        lock (roomsLock)
+        {
+            if (chatRooms.ContainsKey(roomName.ToLower()))
+            {
+                SendResponse(stream, $"Room '{roomName}' already exists.");
+                return;
+            }
+
+            chatRooms[roomName.ToLower()] = new ChatRoom(roomName);
+            SendResponse(stream, $"Room '{roomName}' created successfully.");
+            Console.WriteLine($"Room '{roomName}' created by {clientInfo.Username}");
+        }
+    }
+
+    // Helper method to send response to client
+    static void SendResponse(SslStream stream, string message)
+    {
+        byte[] responseBytes = Encoding.UTF8.GetBytes(message);
+        stream.Write(responseBytes, 0, responseBytes.Length);
     }
 }
 
@@ -1147,7 +1853,7 @@ class ChatRoom
             {
                 if (client.Username != sender) // Don't send back to sender
                 {
-                    byte[] messageBytes = Encoding.ASCII.GetBytes($"[{Name}] {sender}: {message}");
+                    byte[] messageBytes = Encoding.UTF8.GetBytes($"[{Name}] {sender}: {message}");
                     client.Stream.Write(messageBytes, 0, messageBytes.Length);
                 }
             }
@@ -1163,17 +1869,23 @@ class ChatRoom
 class ClientInfo
 {
     public TcpClient Client { get; set; }
-    public NetworkStream Stream { get; set; }
+    public SslStream Stream { get; set; }  // Change from SslStream to SslStream
     public string Username { get; set; }
     public ChatRoom CurrentRoom { get; set; }
     public DateTime LastMessageTime { get; set; } = DateTime.MinValue;
     public int MessageCount { get; set; } = 0;
 
-    public ClientInfo(TcpClient client, NetworkStream stream, string username, ChatRoom room)
+    public ClientInfo(TcpClient client, SslStream stream, string username, ChatRoom room)
     {
         Client = client;
         Stream = stream;
         Username = username;
         CurrentRoom = room;
     }
+}
+
+class SecureClientState
+{
+    public TcpClient Client { get; set; }
+    public X509Certificate2 Certificate { get; set; }
 }
